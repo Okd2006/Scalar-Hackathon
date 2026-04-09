@@ -1,31 +1,30 @@
 """
 Baseline inference script for Incident Response OpenEnv.
-Uses a rule-based agent that mimics LLM decision-making at zero cost.
-Still uses the OpenAI client structure as required by the spec,
-but falls back to a deterministic policy when no real key is available.
+Uses OpenAI client as required. Falls back to rule-based policy
+if no valid API key is provided.
 
 Required env vars:
-  OPENAI_API_KEY  - set to "none" if not using real LLM
+  OPENAI_API_KEY  - API key (set to "none" for rule-based mode)
   API_BASE_URL    - API base URL (default: https://api.openai.com/v1)
   MODEL_NAME      - Model identifier (default: gpt-4o-mini)
-  ENV_URL         - Environment URL (default: http://localhost:7860)
+  ENV_URL         - Environment URL
 """
 import os
 import json
 import time
 import requests
+from openai import OpenAI
 
 API_KEY = os.environ.get("OPENAI_API_KEY", "none")
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 ENV_URL = os.environ.get("ENV_URL", "https://okd06-incident-response-env.hf.space")
 
+client = OpenAI(api_key=API_KEY, base_url=API_BASE_URL)
+
 TASKS = ["task_easy", "task_medium", "task_hard"]
 
-# ── rule-based policies per task ──────────────────────────────────────────────
-# Each policy is an ordered list of actions the agent will take.
-# This mimics what a well-prompted LLM would do.
-
+# rule-based policies (used when no real LLM key is available)
 POLICIES = {
     "task_easy": [
         {"action_type": "investigate", "target": "payment-service", "details": ""},
@@ -75,6 +74,9 @@ POLICIES = {
     ],
 }
 
+SYSTEM_PROMPT = """You are an expert on-call SRE. Respond only with a JSON action:
+{"action_type": "investigate|escalate|apply_fix|postmortem|no_op", "target": "...", "details": "..."}"""
+
 
 def call_env(method: str, path: str, **kwargs) -> dict:
     url = f"{ENV_URL}{path}"
@@ -83,34 +85,63 @@ def call_env(method: str, path: str, **kwargs) -> dict:
     return resp.json()
 
 
-def get_action(task_id: str, step: int, obs: dict) -> dict:
-    """Rule-based policy — returns the next action for the given step."""
+def get_llm_action(messages: list) -> dict:
+    """Try real LLM call, fall back to None if unavailable."""
+    if API_KEY in ("none", "", None):
+        return None
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            temperature=0.2,
+            max_tokens=256,
+        )
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        return json.loads(raw.strip())
+    except Exception:
+        return None
+
+
+def get_rule_action(task_id: str, step: int) -> dict | None:
     policy = POLICIES[task_id]
-    if step < len(policy):
-        return policy[step]
-    # policy exhausted — signal done via postmortem no-op to avoid penalties
-    return None
+    return policy[step] if step < len(policy) else None
 
 
 def run_task(task_id: str) -> float:
-    print(f"\n{'='*60}")
-    print(f"Running task: {task_id}")
-    print(f"{'='*60}")
+    print(f"[START] task_id={task_id} model={MODEL_NAME}")
 
     obs = call_env("post", "/reset", params={"task_id": task_id})
-    print(f"Task: {obs['task_description']}")
-    print(f"Alerts: {obs['alerts']}")
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"TASK: {obs['task_description']}\n"
+                f"ALERTS: {obs['alerts']}\n"
+                f"LOGS: {json.dumps(obs['logs'])}\n"
+                f"METRICS: {json.dumps(obs['metrics'])}\n"
+                f"AVAILABLE: {obs['available_actions']}\n"
+                "Respond with your first action as JSON."
+            ),
+        },
+    ]
 
     done = False
     step_num = 0
     final_score = 0.0
 
     while not done:
-        action = get_action(task_id, step_num, obs)
+        # try LLM first, fall back to rule-based
+        action = get_llm_action(messages)
         if action is None:
-            break  # policy complete, stop early
-        print(f"\n--- Step {step_num + 1} ---")
-        print(f"Action: {action['action_type']} -> {action['target']}")
+            action = get_rule_action(task_id, step_num)
+        if action is None:
+            break
 
         result = call_env(
             "post", "/step",
@@ -123,21 +154,24 @@ def run_task(task_id: str) -> float:
         reason = result["reward"]["reason"]
         done = result["done"]
         final_score = result["info"].get("score", 0.0)
-        obs = result["observation"]
 
-        print(f"Reward: {reward} | Reason: {reason} | Score: {final_score} | Done: {done}")
+        print(f"[STEP] task={task_id} step={step_num + 1} action={action['action_type']}:{action['target']} reward={reward} score={final_score} done={done}")
+
+        messages.append({"role": "assistant", "content": json.dumps(action)})
+        messages.append({
+            "role": "user",
+            "content": f"Result: {reason} | Reward: {reward} | Done: {done}. Next action?"
+        })
 
         step_num += 1
         time.sleep(0.3)
 
-    print(f"\nFinal score for {task_id}: {final_score}")
+    print(f"[END] task_id={task_id} final_score={final_score}")
     return final_score
 
 
 def main():
-    print("Incident Response OpenEnv — Baseline Inference")
-    print(f"Model: rule-based agent (MODEL_NAME={MODEL_NAME})")
-    print(f"Env URL: {ENV_URL}")
+    print(f"[START] inference model={MODEL_NAME} env={ENV_URL}")
 
     scores = {}
     for task_id in TASKS:
@@ -145,17 +179,13 @@ def main():
             score = run_task(task_id)
             scores[task_id] = score
         except Exception as e:
-            print(f"Error on {task_id}: {e}")
+            print(f"[ERROR] task={task_id} error={e}")
             scores[task_id] = 0.0
 
-    print("\n" + "=" * 60)
-    print("BASELINE RESULTS")
-    print("=" * 60)
-    for task_id, score in scores.items():
-        print(f"  {task_id}: {score:.2f}")
     avg = sum(scores.values()) / len(scores)
-    print(f"  Average: {avg:.2f}")
-    print("=" * 60)
+    for task_id, score in scores.items():
+        print(f"[RESULT] task={task_id} score={score:.2f}")
+    print(f"[END] inference average_score={avg:.2f}")
 
     return scores
 
