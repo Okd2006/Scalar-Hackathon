@@ -1,6 +1,9 @@
-"""Server entry point — required by openenv multi-mode deployment."""
+"""
+Server entry point — required by openenv multi-mode deployment.
+Exposes the FastAPI app and a main() entrypoint for `uv run server`.
+"""
 import uvicorn
-from main import app  # noqa: F401
+from main import app  # noqa: F401 — re-export for openenv discovery
 
 
 def main():

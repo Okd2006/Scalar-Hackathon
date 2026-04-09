@@ -30,6 +30,11 @@ def root():
     return {"status": "ok", "env": "incident-response-openenv", "version": "1.0.0"}
 
 
+@app.get("/health", summary="Health check")
+def health():
+    return {"status": "healthy"}
+
+
 @app.post("/reset", response_model=Observation, summary="Reset environment")
 def reset(task_id: str = "task_easy"):
     env = _get_env(task_id)

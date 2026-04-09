@@ -23,7 +23,7 @@ dependencies = [
 dev = ["pytest", "httpx"]
 
 [project.scripts]
-serve = "server.app:main"
+server = "server.app:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
