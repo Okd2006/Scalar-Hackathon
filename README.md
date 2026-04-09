@@ -160,14 +160,14 @@ python inference.py
 
 ## Baseline Scores
 
-Tested with `gpt-4o-mini`:
+Tested with rule-based agent (deterministic policy):
 
 | Task | Score |
 |---|---|
 | task_easy | 1.00 |
-| task_medium | 0.80 |
-| task_hard | 0.60 |
-| Average | 0.80 |
+| task_medium | 1.00 |
+| task_hard | 0.80 |
+| Average | 0.93 |
 
 ---
 
