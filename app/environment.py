@@ -41,6 +41,7 @@ class IncidentResponseEnv:
     def state(self) -> StateModel:
         grader_fn = GRADERS[self.task_id]
         score, _ = grader_fn(self.grader_state)
+        score = max(0.01, min(0.99, score))
         return StateModel(
             task_id=self.task_id,
             step=self.step_count,
@@ -72,6 +73,7 @@ class IncidentResponseEnv:
 
         grader_fn = GRADERS[self.task_id]
         current_score, _ = grader_fn(self.grader_state)
+        current_score = max(0.01, min(0.99, current_score))
 
         # check done conditions
         max_steps_reached = self.step_count >= self.meta["max_steps"]

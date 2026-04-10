@@ -25,6 +25,7 @@ def grade_easy(grader_state: Dict[str, Any]) -> Tuple[float, str]:
         score += 0.4
         reasons.append("applied correct fix (+0.4)")
 
+    score = max(0.01, min(0.99, score))
     return round(score, 2), "; ".join(reasons) if reasons else "no progress"
 
 
@@ -61,6 +62,7 @@ def grade_medium(grader_state: Dict[str, Any]) -> Tuple[float, str]:
         score += 0.2 * grader_state["postmortem_quality"]
         reasons.append(f"postmortem quality (+{0.2 * grader_state['postmortem_quality']:.2f})")
 
+    score = max(0.01, min(0.99, score))
     return round(min(score, 1.0), 2), "; ".join(reasons) if reasons else "no progress"
 
 
@@ -103,6 +105,7 @@ def grade_hard(grader_state: Dict[str, Any]) -> Tuple[float, str]:
         score += 0.20 * pm_quality
         reasons.append(f"postmortem quality (+{0.20 * pm_quality:.2f})")
 
+    score = max(0.01, min(0.99, score))
     return round(min(score, 1.0), 2), "; ".join(reasons) if reasons else "no progress"
 
 
