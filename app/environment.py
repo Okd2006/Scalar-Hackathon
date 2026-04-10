@@ -95,11 +95,12 @@ class IncidentResponseEnv:
         })
 
         obs = self._build_observation(reward_reason)
+        final_score = max(0.01, min(0.99, round(current_score, 4)))
         return StepResult(
             observation=obs,
             reward=Reward(value=round(reward_value, 3), reason=reward_reason),
             done=self.done,
-            info={"score": current_score, "grader_state": copy.deepcopy(self.grader_state)},
+            info={"score": final_score, "grader_state": copy.deepcopy(self.grader_state)},
         )
 
     def _process_action(self, action: Action) -> Tuple[float, str]:

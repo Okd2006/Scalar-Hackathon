@@ -44,7 +44,7 @@ class StateModel(BaseModel):
     task_id: str
     step: int
     max_steps: int
-    score: float = Field(..., description="Task score strictly between 0 and 1 exclusive")
+    score: float = Field(..., gt=0.0, lt=1.0, description="Task score strictly between 0 and 1 exclusive")
     done: bool
     history: List[Dict[str, Any]] = Field(default_factory=list)
     grader_state: Dict[str, Any] = Field(default_factory=dict)
