@@ -4,11 +4,11 @@ from enum import Enum
 
 
 class ActionType(str, Enum):
-    INVESTIGATE = "investigate"   # query a service/log
-    ESCALATE = "escalate"         # escalate to a team
-    APPLY_FIX = "apply_fix"       # apply a remediation
-    POSTMORTEM = "postmortem"     # submit root cause + summary
-    NO_OP = "no_op"               # do nothing (penalized)
+    INVESTIGATE = "investigate"
+    ESCALATE = "escalate"
+    APPLY_FIX = "apply_fix"
+    POSTMORTEM = "postmortem"
+    NO_OP = "no_op"
 
 
 class Action(BaseModel):
@@ -29,7 +29,7 @@ class Observation(BaseModel):
 
 
 class Reward(BaseModel):
-    value: float = Field(..., ge=-1.0, le=1.0)
+    value: float = Field(..., description="Reward signal for this step")
     reason: str
 
 
@@ -44,7 +44,7 @@ class StateModel(BaseModel):
     task_id: str
     step: int
     max_steps: int
-    score: float
+    score: float = Field(..., description="Task score strictly between 0 and 1 exclusive")
     done: bool
     history: List[Dict[str, Any]] = Field(default_factory=list)
     grader_state: Dict[str, Any] = Field(default_factory=dict)

@@ -19,13 +19,12 @@ class IncidentResponseEnv:
     def _reset_state(self):
         self.step_count = 0
         self.done = False
-        self.cumulative_score = 0.0
+        self.cumulative_score = 0.01
         self.history = []
         self.grader_state: Dict[str, Any] = {
             "investigated_root_cause": False,
             "correct_escalation": False,
             "correct_fix_applied": False,
-            # medium/hard extras
             "identified_cascade_origin": False,
             "identified_root_cause": False,
             "investigated_config_service": False,
@@ -41,7 +40,6 @@ class IncidentResponseEnv:
     def state(self) -> StateModel:
         grader_fn = GRADERS[self.task_id]
         score, _ = grader_fn(self.grader_state)
-        score = max(0.01, min(0.99, score))
         return StateModel(
             task_id=self.task_id,
             step=self.step_count,
@@ -55,42 +53,40 @@ class IncidentResponseEnv:
     def step(self, action: Action) -> StepResult:
         if self.done:
             obs = self._build_observation("Episode already finished.")
-            return StepResult(observation=obs, reward=Reward(value=0.0, reason="already done"), done=True, info={})
+            return StepResult(
+                observation=obs,
+                reward=Reward(value=0.01, reason="already done"),
+                done=True,
+                info={},
+            )
 
         self.step_count += 1
         reward_value, reward_reason = self._process_action(action)
 
-        # penalize no_op
         if action.action_type == ActionType.NO_OP:
             self.grader_state["no_op_count"] += 1
-            reward_value = -0.1
+            reward_value = -0.05
             reward_reason = "no_op penalty"
 
-        # penalize excessive no_ops
         if self.grader_state["no_op_count"] >= 3:
-            reward_value = -0.2
+            reward_value = -0.10
             reward_reason = "repeated no_op — agent appears stuck"
 
         grader_fn = GRADERS[self.task_id]
         current_score, _ = grader_fn(self.grader_state)
-        current_score = max(0.01, min(0.99, current_score))
 
-        # check done conditions
         max_steps_reached = self.step_count >= self.meta["max_steps"]
         task_complete = self._is_task_complete()
 
         if task_complete:
             self.done = True
-            reward_value = max(reward_value, 0.2)
-            reward_reason += " | task complete bonus"
+            reward_reason += " | task complete"
 
         if max_steps_reached and not self.done:
             self.done = True
-            reward_value = min(reward_value, -0.05)
             reward_reason += " | max steps reached"
 
         self.cumulative_score = current_score
-
         self.history.append({
             "step": self.step_count,
             "action": action.model_dump(),
@@ -113,44 +109,37 @@ class IncidentResponseEnv:
 
         if atype == ActionType.INVESTIGATE:
             return self._handle_investigate(target)
-
         elif atype == ActionType.ESCALATE:
             correct = scenario["correct_escalation"]
             if target == correct:
                 if not self.grader_state["correct_escalation"]:
                     self.grader_state["correct_escalation"] = True
-                    return 0.3, f"correct escalation to {target}"
-                return 0.0, "already escalated correctly"
-            else:
-                return -0.1, f"wrong escalation target: {target}"
-
+                    return 0.30, f"correct escalation to {target}"
+                return 0.01, "already escalated correctly"
+            return -0.10, f"wrong escalation: {target}"
         elif atype == ActionType.APPLY_FIX:
             correct = scenario["correct_fix"]
             if target == correct:
                 if not self.grader_state["correct_fix_applied"]:
                     self.grader_state["correct_fix_applied"] = True
-                    return 0.4, f"correct fix applied: {target}"
-                return 0.0, "fix already applied"
-            else:
-                return -0.15, f"wrong fix applied: {target} — may worsen incident"
-
+                    return 0.40, f"correct fix applied: {target}"
+                return 0.01, "fix already applied"
+            return -0.15, f"wrong fix: {target}"
         elif atype == ActionType.POSTMORTEM:
             return self._handle_postmortem(action.details or "")
-
-        return 0.0, "unknown action"
+        return 0.01, "unknown action"
 
     def _handle_investigate(self, target: str) -> Tuple[float, str]:
         scenario = self.scenario
         root_cause = scenario["root_cause"]
 
-        # task-specific investigation tracking
         if self.task_id == "task_hard":
             if target == "config-service" and not self.grader_state["investigated_config_service"]:
                 self.grader_state["investigated_config_service"] = True
-                return 0.15, "investigated config-service — found partial secret rotation failure"
+                return 0.15, "investigated config-service — partial secret rotation failure found"
             if target == "auth-service" and not self.grader_state["investigated_auth_service"]:
                 self.grader_state["investigated_auth_service"] = True
-                return 0.10, "investigated auth-service — found JWT verification failures"
+                return 0.10, "investigated auth-service — JWT verification failures found"
 
         if target == root_cause:
             if not self.grader_state["investigated_root_cause"]:
@@ -159,31 +148,28 @@ class IncidentResponseEnv:
                     self.grader_state["identified_cascade_origin"] = True
                 if self.task_id == "task_hard":
                     self.grader_state["identified_root_cause"] = True
-                return 0.3, f"investigated root cause: {target} — anomalies found"
+                return 0.30, f"investigated root cause: {target}"
             return 0.05, f"re-investigated {target} — no new findings"
 
         if target in scenario.get("available_services", []):
-            return 0.05, f"investigated {target} — no critical issues found"
-
+            return 0.05, f"investigated {target} — no critical issues"
         return -0.05, f"unknown service: {target}"
 
     def _handle_postmortem(self, text: str) -> Tuple[float, str]:
         keywords = self.scenario.get("postmortem_keywords", [])
         if not keywords:
-            # easy task doesn't require postmortem
-            return 0.0, "postmortem not required for this task"
-
+            return 0.01, "postmortem not required for this task"
         text_lower = text.lower()
         matched = [kw for kw in keywords if kw in text_lower]
         quality = len(matched) / len(keywords)
-        self.grader_state["postmortem_quality"] = max(self.grader_state.get("postmortem_quality", 0), quality)
-
+        self.grader_state["postmortem_quality"] = max(
+            self.grader_state.get("postmortem_quality", 0), quality
+        )
         if quality >= 0.8:
-            return 0.2, f"high quality postmortem ({len(matched)}/{len(keywords)} keywords)"
+            return 0.20, f"high quality postmortem ({len(matched)}/{len(keywords)} keywords)"
         elif quality >= 0.5:
-            return 0.1, f"partial postmortem ({len(matched)}/{len(keywords)} keywords)"
-        else:
-            return 0.0, f"low quality postmortem ({len(matched)}/{len(keywords)} keywords)"
+            return 0.10, f"partial postmortem ({len(matched)}/{len(keywords)} keywords)"
+        return 0.01, f"low quality postmortem ({len(matched)}/{len(keywords)} keywords)"
 
     def _is_task_complete(self) -> bool:
         gs = self.grader_state
