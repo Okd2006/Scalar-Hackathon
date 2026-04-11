@@ -164,10 +164,12 @@ Tested with rule-based agent (deterministic policy):
 
 | Task | Score |
 |---|---|
-| task_easy | 1.00 |
-| task_medium | 1.00 |
+| task_easy | 0.99 |
+| task_medium | 0.99 |
 | task_hard | 0.80 |
 | Average | 0.93 |
+
+All task scores are constrained to stay strictly within `(0, 1)`.
 
 ---
 

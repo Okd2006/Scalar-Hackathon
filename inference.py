@@ -24,6 +24,11 @@ client = OpenAI(api_key=API_KEY, base_url=API_BASE_URL)
 
 TASKS = ["task_easy", "task_medium", "task_hard"]
 
+
+def strict_score(score: float) -> float:
+    """Keep task-level scores strictly inside the open interval (0, 1)."""
+    return max(0.01, min(0.99, round(score, 4)))
+
 SYSTEM_PROMPT = """You are an expert on-call Site Reliability Engineer (SRE).
 You are given an active production incident. Your job is to:
 1. Investigate services to find the root cause
@@ -86,7 +91,7 @@ def run_task(task_id: str) -> float:
 
     done = False
     step_num = 0
-    final_score = 0.0
+    final_score = 0.01
 
     while not done:
         try:
@@ -105,7 +110,7 @@ def run_task(task_id: str) -> float:
         reward = result["reward"]["value"]
         reason = result["reward"]["reason"]
         done = result["done"]
-        final_score = result["info"].get("score", 0.0)
+        final_score = strict_score(result["info"].get("score", 0.01))
 
         print(f"[STEP] task={task_id} step={step_num + 1} action={action.get('action_type')}:{action.get('target')} reward={reward} score={final_score} done={done}")
 
@@ -128,7 +133,7 @@ def run_task(task_id: str) -> float:
         time.sleep(0.5)
 
     print(f"[END] task_id={task_id} final_score={final_score}")
-    return final_score
+    return strict_score(final_score)
 
 
 def main():
@@ -138,10 +143,10 @@ def main():
     for task_id in TASKS:
         try:
             score = run_task(task_id)
-            scores[task_id] = score
+            scores[task_id] = strict_score(score)
         except Exception as e:
             print(f"[ERROR] task={task_id} error={e}")
-            scores[task_id] = 0.0
+            scores[task_id] = 0.01
 
     avg = sum(scores.values()) / len(scores)
     for task_id, score in scores.items():
